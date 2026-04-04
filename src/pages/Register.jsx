@@ -116,6 +116,8 @@ export default function Register() {
 
   function handleSubmit(e) {
     e.preventDefault()
+    
+    if(loading) return;
     if (form.password !== form.confirm) {
       setError('Passwords do not match')
       setShakeKey(function(k) { return k + 1 })
