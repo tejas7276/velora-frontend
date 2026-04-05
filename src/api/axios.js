@@ -4,7 +4,7 @@ var BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://velora-backend-7qjl
 
 var api = axios.create({
   baseURL: BASE_URL,
-  timeout: 30000,
+  timeout: 60000,
 })
 
 console.log("BASE URL =", BASE_URL)
