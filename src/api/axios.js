@@ -7,6 +7,8 @@ var api = axios.create({
   timeout: 30000,
 })
 
+console.log("BASE URL =", BASE_URL)
+
 function getFriendlyMessage(err) {
   var status  = err.response ? err.response.status : null
   var message = err.response?.data?.message || ''
