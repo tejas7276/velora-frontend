@@ -132,6 +132,7 @@ export default function Register() {
     register({ name: form.name, email: form.email, password: form.password })
       .then(function(res) { saveAuth(res.data); navigate('/dashboard') })
       .catch(function(err) {
+        console.log("FULL ERROR:", err);
         setError(err.response?.data?.message || 'Registration failed')
         setShakeKey(function(k) { return k + 1 })
       })

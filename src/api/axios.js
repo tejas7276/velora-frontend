@@ -1,7 +1,9 @@
 import axios from 'axios'
 
-const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL,
+var BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://velora-backend-7qjl.onrender.com/api'
+
+var api = axios.create({
+  baseURL: BASE_URL,
   timeout: 30000,
 })
 
@@ -17,31 +19,23 @@ function getFriendlyMessage(err) {
   }
 
   switch (status) {
-
     case 400:
       if (message.toLowerCase().includes('payload')) {
         return { msg: 'Add input text or upload a file before submitting.', type: 'warning' }
       }
       return { msg: message || 'Invalid request — check your input.', type: 'warning' }
-
     case 401:
       return { msg: 'Session expired — please login again.', type: 'error' }
-
     case 403:
-      return { msg: 'Access denied — you don’t have permission.', type: 'error' }
-
+      return { msg: 'Access denied — you don\'t have permission.', type: 'error' }
     case 404:
       return { msg: 'Data not found — it may have been removed.', type: 'error' }
-
     case 409:
       return { msg: 'Account already exists — try logging in.', type: 'warning' }
-
     case 422:
       return { msg: 'Invalid data — please fix highlighted fields.', type: 'warning' }
-
     case 429:
       return { msg: 'Too many requests — slow down a bit 😅', type: 'warning' }
-
     case 500:
       if (message.toLowerCase().includes('openai') || message.toLowerCase().includes('groq')) {
         return { msg: 'AI service failed — retry in a few seconds.', type: 'error' }
@@ -50,10 +44,8 @@ function getFriendlyMessage(err) {
         return { msg: 'Queue service down — check backend worker.', type: 'error' }
       }
       return { msg: 'Server crashed — check backend logs.', type: 'error' }
-
     case 503:
       return { msg: 'Service temporarily down — try again shortly.', type: 'error' }
-
     default:
       return { msg: message || 'Unexpected error occurred.', type: 'error' }
   }
@@ -65,6 +57,7 @@ export function setToastHandler(fn) {
   _showToast = fn
 }
 
+// ── REQUEST INTERCEPTOR ───────────────────────────────────────────────────────
 api.interceptors.request.use(function(config) {
   var token  = localStorage.getItem('token')
   var userId = localStorage.getItem('userId')
@@ -73,29 +66,56 @@ api.interceptors.request.use(function(config) {
   return config
 })
 
+// ── RESPONSE INTERCEPTOR ──────────────────────────────────────────────────────
 api.interceptors.response.use(
   function(res) { return res },
   function(err) {
     var status = err.response ? err.response.status : null
     var url    = err.config   ? err.config.url      : ''
 
-    // 401 on protected routes — log out and redirect
+    // ISSUE 3 FIX: The original code called localStorage.clear() on ANY 401
+    // from ANY endpoint. This caused:
+    //   1. Background poll fails with 401 (e.g. metrics, workers)
+    //   2. localStorage cleared → token gone
+    //   3. ALL subsequent requests fail → user sees "session expired"
+    //   4. User didn't actually log out — the interceptor nuked the session
+    //
+    // NEW BEHAVIOR:
+    //   - 401 on auth endpoints (/auth/login, /auth/register) → show message only
+    //   - 401 on background polls → silently ignore, do NOT clear session
+    //   - 401 on user-triggered protected routes → redirect to login ONLY
+    //     if the token is actually missing (not just a transient server issue)
     if (status === 401) {
       var isAuthRoute = url.includes('/auth/login') || url.includes('/auth/register')
-      if (!isAuthRoute) {
-        localStorage.clear()
-        window.location.href = '/login'
+      var isBackgroundPoll = (
+        url.includes('/workers')  ||
+        url.includes('/metrics')  ||
+        (url.includes('/jobs') && err.config && err.config.method === 'get')
+      )
+
+      if (!isAuthRoute && !isBackgroundPoll) {
+        // Only redirect if the token is genuinely missing or malformed,
+        // not just because of a transient server-side 401
+        var token = localStorage.getItem('token')
+        if (!token) {
+          // No token at all — redirect to login
+          window.location.href = '/login'
+          return Promise.reject(err)
+        }
+        // Token exists but server returned 401 — show message, keep session
+        // The user can retry. This prevents session destruction on transient errors.
+        if (_showToast) {
+          _showToast('Authentication failed — please try again.', 'error')
+        }
         return Promise.reject(err)
       }
     }
 
-    // FIX — skip toast for background polling endpoints
-    // These fire automatically every few seconds — user didn't trigger them
-    // showing toasts for these would spam the UI constantly
+    // Skip toast for background polling endpoints
     var isBackgroundPoll = (
       url.includes('/workers')  ||
       url.includes('/metrics')  ||
-      url.includes('/api/jobs') && err.config && err.config.method === 'get'
+      (url.includes('/jobs') && err.config && err.config.method === 'get')
     )
 
     if (_showToast && !isBackgroundPoll) {
