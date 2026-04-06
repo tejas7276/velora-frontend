@@ -303,7 +303,7 @@ function ResultRenderer({ text }) {
       i++; continue
     }
     if (/^[=\-]{4,}$/.test(t)) { i++; continue }
-    els.push(<p key={i} className="text-sm text-slate-700 leading-relaxed my-1.5">{cleanBold(t)}</p>)
+    els.push(<p key={i} className="text-[15px] text-slate-700 leading-7 my-2">{cleanBold(t)}</p>)
     i++
   }
   return <div className="flex flex-col">{els}</div>
@@ -315,7 +315,7 @@ function CompactResult({ text }) {
   var plain  = stripPlain(text)
   var result = pickSentences(plain, 2)
   return (
-    <p className="text-[15px] text-slate-800 leading-relaxed font-normal">
+    <p className="text-[15px] text-slate-800 leading-7 font-normal">
       {result || plain.slice(0, 300)}
     </p>
   )
@@ -490,6 +490,7 @@ export default function JobDetails() {
           -webkit-text-fill-color: transparent;
           animation: shimmer 3s linear infinite;
         }
+        .result-card p { margin-bottom: 10px; }
         .result-card::-webkit-scrollbar { width: 4px }
         .result-card::-webkit-scrollbar-track { background: transparent }
         .result-card::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 4px }
@@ -716,11 +717,11 @@ export default function JobDetails() {
                   <ResultRenderer text={job.result} />
                 </div>
               ) : resultType === 'compact' ? (
-                <div className="px-5 py-5">
+                <div className="px-6 py-6">
                   <CompactResult text={job.result} />
                 </div>
               ) : (
-                <div className="px-5 py-4 max-h-[480px] overflow-y-auto result-card">
+                <div className="px-6 py-5 max-h-[480px] overflow-y-auto result-card">
                   <ResultRenderer text={job.result} />
                 </div>
               )}
@@ -740,7 +741,7 @@ export default function JobDetails() {
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-slate-700 leading-relaxed flex-1 whitespace-pre-wrap flex-1">{summary}</p>
+                    <p className="text-sm text-slate-700 leading-7 whitespace-pre-wrap">{summary}</p>
                   </div>
                 </div>
               )}
@@ -749,7 +750,7 @@ export default function JobDetails() {
 
           {/* Processing / waiting state */}
           {!job.result && job.status !== 'FAILED' && (
-            <div className="card p-12 flex flex-col items-center justify-center text-center fade-right stagger-2">
+            <div className="card p-12 flex flex-col items-center justify-center text-center fade-right stagger-2 min-h-[300px]">
               {(job.status === 'PROCESSING' || job.status === 'PENDING') ? (
                 <div className="relative">
                   <div className="spinner w-10 h-10 mb-5" />
