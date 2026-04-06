@@ -2,20 +2,80 @@ import axios from 'axios'
 
 var BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://velora-backend-7qjl.onrender.com/api'
 
+// ── COLD START STATE ────────────────────────────────────────────────────────
+// Render free tier spins down after 15 min inactivity.
+// When the first request hits a cold server, it takes 30–45s to wake up.
+// We track wake-up state so the UI can show a friendly warming message
+// instead of "Backend not reachable" which makes users think it's broken.
+var _serverAwake      = true         // assume awake on first load
+var _wakeUpStartTime  = null         // timestamp when we detected cold start
+var _onWakeUpChange   = null         // callback: (isWakingUp, secondsElapsed) => void
+
+export function setWakeUpHandler(fn) { _onWakeUpChange = fn }
+
+// ── WAKE-UP PING ─────────────────────────────────────────────────────────────
+// When we detect a network failure, ping /actuator/health to check if
+// the server is waking up. This gives the user live feedback.
+function pingUntilAwake() {
+  if (!_wakeUpStartTime) {
+    _wakeUpStartTime = Date.now()
+    _serverAwake = false
+    if (_onWakeUpChange) _onWakeUpChange(true, 0)
+  }
+
+  // Use a short-timeout ping instance to avoid blocking the main api instance
+  var pinger = axios.create({ baseURL: BASE_URL, timeout: 5000 })
+  var attempt = 0
+  var MAX_ATTEMPTS = 20  // 20 * 3s = 60 seconds max wait
+
+  function tryPing() {
+    attempt++
+    pinger.get('/actuator/health')
+      .then(function() {
+        // Server responded — it's awake
+        _serverAwake = true
+        var elapsed = Math.round((Date.now() - _wakeUpStartTime) / 1000)
+        _wakeUpStartTime = null
+        if (_onWakeUpChange) _onWakeUpChange(false, elapsed)
+      })
+      .catch(function() {
+        if (attempt < MAX_ATTEMPTS) {
+          var elapsed = Math.round((Date.now() - _wakeUpStartTime) / 1000)
+          if (_onWakeUpChange) _onWakeUpChange(true, elapsed)
+          setTimeout(tryPing, 3000)  // retry every 3 seconds
+        } else {
+          // Gave up — server not responding after 60s
+          _serverAwake = true  // reset flag so normal errors show
+          _wakeUpStartTime = null
+          if (_onWakeUpChange) _onWakeUpChange(false, 60)
+        }
+      })
+  }
+
+  tryPing()
+}
+
 var api = axios.create({
   baseURL: BASE_URL,
-  timeout: 60000,
+  timeout: 60000,   // 60s — enough for Render cold start (typically 30–45s)
 })
-
-console.log("BASE URL =", BASE_URL)
 
 function getFriendlyMessage(err) {
   var status  = err.response ? err.response.status : null
   var message = err.response?.data?.message || ''
 
+  // ── COLD START DETECTION ─────────────────────────────────────────────────
+  // Network error (status=null) AND server not known to be awake
+  // = likely Render cold start, not a real infrastructure failure
   if (!status) {
+    if (!_serverAwake || _wakeUpStartTime) {
+      return {
+        msg: 'Server is waking up — this takes 30–45 seconds on first use. Please wait…',
+        type: 'warning'
+      }
+    }
     return {
-      msg: 'Backend not reachable — start server or check connection.',
+      msg: 'Backend not reachable — check connection or try again.',
       type: 'error'
     }
   }
@@ -55,9 +115,7 @@ function getFriendlyMessage(err) {
 
 var _showToast = null
 
-export function setToastHandler(fn) {
-  _showToast = fn
-}
+export function setToastHandler(fn) { _showToast = fn }
 
 // ── REQUEST INTERCEPTOR ───────────────────────────────────────────────────────
 api.interceptors.request.use(function(config) {
@@ -68,43 +126,50 @@ api.interceptors.request.use(function(config) {
   return config
 })
 
-// ── RESPONSE INTERCEPTOR ──────────────────────────────────────────────────────
+// ── RESPONSE INTERCEPTOR ─────────────────────────────────────────────────────
 api.interceptors.response.use(
-  function(res) { return res },
+  function(res) {
+    // Successful response = server is awake
+    if (!_serverAwake) {
+      _serverAwake = true
+      _wakeUpStartTime = null
+      if (_onWakeUpChange) _onWakeUpChange(false, 0)
+    }
+    return res
+  },
   function(err) {
     var status = err.response ? err.response.status : null
     var url    = err.config   ? err.config.url      : ''
 
-    // ISSUE 3 FIX: The original code called localStorage.clear() on ANY 401
-    // from ANY endpoint. This caused:
-    //   1. Background poll fails with 401 (e.g. metrics, workers)
-    //   2. localStorage cleared → token gone
-    //   3. ALL subsequent requests fail → user sees "session expired"
-    //   4. User didn't actually log out — the interceptor nuked the session
-    //
-    // NEW BEHAVIOR:
-    //   - 401 on auth endpoints (/auth/login, /auth/register) → show message only
-    //   - 401 on background polls → silently ignore, do NOT clear session
-    //   - 401 on user-triggered protected routes → redirect to login ONLY
-    //     if the token is actually missing (not just a transient server issue)
+    // ── COLD START DETECTION ─────────────────────────────────────────────────
+    // Network error (no HTTP response) = either cold start or real network failure.
+    // If the server was previously awake (we got 200s before), it's a cold start.
+    // Start the wake-up ping to track recovery and notify the UI.
+    if (!status && !_wakeUpStartTime) {
+      pingUntilAwake()
+    }
+
+    // ── 401 HANDLING ─────────────────────────────────────────────────────────
     if (status === 401) {
-    var isAuthRoute = url.includes('/auth/login') || url.includes('/auth/register')
+      var isAuthRoute = url.includes('/auth/login') || url.includes('/auth/register')
+      var isBackgroundPoll = (
+        url.includes('/workers')  ||
+        url.includes('/metrics')  ||
+        (url.includes('/jobs') && err.config && err.config.method === 'get')
+      )
 
-    if (!isAuthRoute) {
-      var token = localStorage.getItem('token')
-
-      if (!token) {
-        window.location.href = '/login'
+      if (!isAuthRoute && !isBackgroundPoll) {
+        var token = localStorage.getItem('token')
+        if (!token) {
+          window.location.href = '/login'
+          return Promise.reject(err)
+        }
+        if (_showToast) {
+          _showToast('Authentication failed — please try again.', 'error')
+        }
         return Promise.reject(err)
       }
-
-      if (_showToast) {
-        _showToast('Temporary auth issue — retry', 'warning')
-      }
-
-      return Promise.reject(err)
     }
-  }
 
     // Skip toast for background polling endpoints
     var isBackgroundPoll = (
