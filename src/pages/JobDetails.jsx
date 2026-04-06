@@ -126,90 +126,203 @@ function buildSummary(text, jobType, payload) {
   var plain = stripPlain(text)
   if (!plain || plain.length < 10) return ''
 
-  // Job-type-aware summary: captures purpose + action + key details
-  // Rules: NOT first sentence copy, NOT generic, answers "What was done and why?"
-
   var jt = (jobType || '').toUpperCase()
   var p  = (payload || '').trim()
 
-  // For EMAIL_WRITER: extract subject + purpose from the email
+  // ── RESUME_SCORE: show exact score + hiring signal ──────────────────────────
+  if (jt === 'RESUME_SCORE') {
+    var scoreM = text.match(/Overall Score[:\s]+([\d.]+\s*\/\s*100)/i)
+    var hiringM = text.match(/Hiring Recommendation[:\s]+([^\n]{5,60})/i)
+    var impressionM = text.match(/First Impression[^\n]*\n([^\n#]{10,100})/i)
+    if (scoreM && hiringM) return scoreM[1].trim() + ' · ' + hiringM[1].trim().replace(/^[\s\-–•]+/, '')
+    if (scoreM && impressionM) return scoreM[1].trim() + ' · ' + impressionM[1].trim().slice(0, 80)
+    if (scoreM) return 'Overall: ' + scoreM[1].trim()
+    return 'Resume scored — see scorecard above for breakdown.'
+  }
+
+  // ── JD_MATCH: match % + verdict ────────────────────────────────────────────
+  if (jt === 'JD_MATCH') {
+    var matchM = text.match(/Match Score[:\s]+(\d+%)/i)
+    var verdictM = text.match(/Verdict[^\n]*\n([^\n#]{10,80})/i)
+    if (matchM && verdictM) return matchM[1].trim() + ' match · ' + verdictM[1].trim().replace(/^[\s\-–•]+/, '')
+    if (matchM) return matchM[1].trim() + ' match — see breakdown for gaps and strengths.'
+    return 'JD match analysis complete — review match table for skill alignment.'
+  }
+
+  // ── EMAIL_WRITER: subject + precise action intent ─────────────────────────
   if (jt === 'EMAIL_WRITER') {
-    // Try to extract Subject line
-    var subMatch = text.match(/Subject:\s*(.+)/i)
-    var sub = subMatch ? subMatch[1].trim() : ''
-    // Try to extract key purpose from first body paragraph (skip greeting)
-    var lines = text.split(/\n+/).map(function(l) { return l.trim() }).filter(Boolean)
-    var bodyLine = ''
-    for (var i = 0; i < lines.length; i++) {
-      var l = lines[i]
-      if (l.startsWith('Subject:') || l.startsWith('Dear') || l.startsWith('Hi ') || l.startsWith('Hello')) continue
-      if (l.length > 30) { bodyLine = l; break }
+    var subM = text.match(/Subject:\s*(.+)/i)
+    var sub = subM ? subM[1].trim() : ''
+    var bodyLines = text.split(/\n+/).map(function(l) { return l.trim() }).filter(Boolean)
+    var purposeLine = ''
+    for (var i = 0; i < bodyLines.length; i++) {
+      var l = bodyLines[i]
+      if (/^(Subject:|Dear|Hi |Hello|Regards|Best|Sincerely|To Whom)/i.test(l)) continue
+      if (l.length > 25 && l.length < 160) { purposeLine = l; break }
     }
-    // ✅ FIXED (real summary, not copy)
-  if (sub) {
-    var purpose = ''
+    if (sub && purposeLine) return 'Subject: "' + sub.slice(0, 60) + '" · ' + purposeLine.slice(0, 90)
+    if (sub) return 'Professional email drafted: "' + sub.slice(0, 80) + '"'
+    return purposeLine ? purposeLine.slice(0, 150) : 'Professional email drafted with structured intent.'
+  }
 
-    if (bodyLine.toLowerCase().includes('leave')) {
-      purpose = 'requesting leave'
-    } else if (bodyLine.toLowerCase().includes('referral')) {
-      purpose = 'requesting a referral'
-    } else if (bodyLine.toLowerCase().includes('apply')) {
-      purpose = 'applying for a role'
+  // ── CODE_REVIEW: severity signal + issue count ────────────────────────────
+  if (jt === 'CODE_REVIEW') {
+    var secM = text.match(/##\s*Security Issues([\s\S]*?)(?=##|$)/i)
+    var bugM  = text.match(/##\s*Logic[^\n]*([\s\S]*?)(?=##|$)/i)
+    var hasSecIssues = secM && !/no visible|none|omit/i.test(secM[1] || '')
+    var hasBugIssues = bugM && !/no visible|none|omit/i.test(bugM[1] || '')
+    var prioM = text.match(/Priority Fix[^\n]*\n([^\n#]{10,100})/i)
+    if (hasSecIssues && hasBugIssues) return 'Security + logic issues found — see Priority Fix List.'
+    if (hasSecIssues) return 'Security vulnerabilities identified — review Security section immediately.'
+    if (hasBugIssues) return 'Logic/bug issues found — see Priority Fix List for ordered fixes.'
+    if (prioM) return 'Code reviewed · Top fix: ' + prioM[1].trim().slice(0, 100)
+    return 'Code review complete — no critical issues found.'
+  }
+
+  // ── TRANSLATE: language pair + fidelity note ──────────────────────────────
+  if (jt === 'TRANSLATE') {
+    var srcLangM = text.match(/Source Language[^:]*:[^\n]*(\w[\w\s]+)/i)
+    var tgtLangM = text.match(/Target Language[^:]*:[^\n]*(\w[\w\s]+)/i)
+    var notesM   = text.match(/Cultural.*Notes[^\n]*\n([^\n#]{10,100})/i)
+    if (srcLangM && tgtLangM) {
+      var pair = srcLangM[1].trim() + ' → ' + tgtLangM[1].trim()
+      return notesM ? pair + ' · ' + notesM[1].trim().slice(0, 80) : 'Translated: ' + pair
     }
-
-    return 'A professional email is drafted ' + (purpose ? purpose + ' ' : '') + 'with clear context and intent.'
-  }
-    return bodyLine ? bodyLine.slice(0, 160) + (bodyLine.length > 160 ? '...' : '') : plain.slice(0, 160)
+    return 'Translation complete — see Translator Notes for any adapted idioms.'
   }
 
-  // For QUESTION_ANSWER: show what was asked + core answer
-  if (jt === 'QUESTION_ANSWER') {
-    if (p && p.length > 3) {
-      var shortQ = p.length > 80 ? p.slice(0, 80) + '...' : p
-      return 'Q: ' + shortQ + ' → ' + plain.slice(0, 120) + (plain.length > 120 ? '...' : '')
-    }
-    return plain.slice(0, 160)
+  // ── SENTIMENT: verdict + polarity score ───────────────────────────────────
+  if (jt === 'SENTIMENT') {
+    var sentVerdict = text.match(/Sentiment Verdict[^\n]*\n([^\n#]{5,80})/i)
+    var polarityM   = text.match(/Polarity Score[^\n]*\n([^\n#]{5,50})/i)
+    var emotionM    = text.match(/Emotion Profile[^\n]*\n([^\n#]{5,80})/i)
+    if (sentVerdict && polarityM) return sentVerdict[1].trim().slice(0,60) + ' · Polarity: ' + polarityM[1].trim().slice(0,30)
+    if (sentVerdict) return 'Sentiment: ' + sentVerdict[1].trim().slice(0, 100)
+    if (emotionM) return 'Dominant emotion: ' + emotionM[1].trim().slice(0, 100)
+    return 'Sentiment analyzed — see Emotion Profile for full breakdown.'
   }
 
-  // For RESUME_SCORE / AI_ANALYSIS: extract score or verdict line
-  if (jt === 'RESUME_SCORE' || jt === 'JD_MATCH') {
-    var scoreMatch = text.match(/(?:Overall Score|Match Score|Score)\s*[:\-]?\s*(\d+(?:\.\d+)?(?:\s*\/\s*100)?%?)/i)
-    var verdictMatch = text.match(/(?:Verdict|Recommendation|Decision)\s*[:\-]?\s*([^]{5,60})/i)
-    if (scoreMatch && verdictMatch) return scoreMatch[1].trim() + ' — ' + verdictMatch[1].trim()
-    if (scoreMatch) return 'Score: ' + scoreMatch[1].trim() + ' — ' + plain.slice(0, 100)
-  }
-
-  // For SUMMARIZE: pick 2nd or 3rd sentence (not first — first is always copied)
+  // ── SUMMARIZE: the "so what" insight — NOT the first sentence ────────────
   if (jt === 'SUMMARIZE') {
-    var parts = plain.match(/[^.!?]{15,}[.!?]+/g) || []
-    // Skip first sentence, use second or third
-    for (var k = 1; k < Math.min(parts.length, 4); k++) {
-      var s = parts[k].trim()
-      var low = s.toLowerCase()
-      var bad = false
-      for (var f = 0; f < FILLERS.length; f++) {
-        if (low.startsWith(FILLERS[f])) { bad = true; break }
+    // Try: "So What" section, or last meaningful section before end
+    var soWhatM = text.match(/(?:So What|Conclusion Strength|Recruiter Verdict|Decision Support)[^\n]*\n([^\n#]{15,150})/i)
+    if (soWhatM) return soWhatM[1].trim().replace(/^[\s\-–•:]+/, '').slice(0, 160)
+    // Try: second non-filler sentence
+    var parts2 = plain.match(/[^.!?]{15,}[.!?]+/g) || []
+    for (var k = 1; k < Math.min(parts2.length, 5); k++) {
+      var s2 = parts2[k].trim()
+      var low2 = s2.toLowerCase()
+      var isBad = false
+      for (var f2 = 0; f2 < FILLERS.length; f2++) {
+        if (low2.startsWith(FILLERS[f2])) { isBad = true; break }
       }
-      if (!bad && s.length > 20) return s
+      if (!isBad && s2.length > 20 && s2.length < 200) return s2
     }
   }
 
-  // Default: use second meaningful sentence from plain text (not first — avoids copying)
+  // ── AI_ANALYSIS: extract highest-signal line ─────────────────────────────
+  if (jt === 'AI_ANALYSIS') {
+    var findingM = text.match(/(?:Core Thesis|Headline Metric|Code Intent|Hiring Decision)[^\n]*\n([^\n#]{10,150})/i)
+    if (findingM) return findingM[1].trim().replace(/^[\s\-–•:]+/, '').slice(0, 160)
+  }
+
+  // ── INTERVIEW_PREP: role + focus ──────────────────────────────────────────
+  if (jt === 'INTERVIEW_PREP') {
+    var roleM   = text.match(/Role Type[:\s]+([^\n]{5,60})/i)
+    var focusM  = text.match(/Focus Areas[:\s]+([^\n]{5,80})/i)
+    if (roleM && focusM) return 'Prep for ' + roleM[1].trim() + ' · Focus: ' + focusM[1].trim().slice(0, 80)
+    if (roleM) return 'Interview prep generated for: ' + roleM[1].trim()
+    return 'Full interview guide generated — review Technical Questions first.'
+  }
+
+  // ── MEETING_SUMMARY: key decision or first action ─────────────────────────
+  if (jt === 'MEETING_SUMMARY') {
+    var meetLineM = text.match(/Meeting in One Line[^\n]*\n([^\n#]{10,120})/i)
+    var actionM   = text.match(/##\s*Action Items[^\n]*\n-\s*([^\n→]{10,100})/i)
+    if (meetLineM) return meetLineM[1].trim().slice(0, 140)
+    if (actionM) return 'Action assigned: ' + actionM[1].trim().slice(0, 120)
+    return 'Meeting extracted — review Action Items and Decisions sections.'
+  }
+
+  // ── QUESTION_ANSWER: Q→A format ───────────────────────────────────────────
+  if (jt === 'QUESTION_ANSWER') {
+    var shortQ = p.length > 70 ? p.slice(0, 70) + '…' : p
+    var ans = plain.replace(/^(The answer is|Based on|According to)[:\s]*/i, '')
+    return shortQ ? shortQ + ' → ' + ans.slice(0, 110) : ans.slice(0, 160)
+  }
+
+  // ── BUG_EXPLAINER: severity + what went wrong ─────────────────────────────
+  if (jt === 'BUG_EXPLAINER') {
+    var severityM = text.match(/Severity[^\n]*\n([^\n#]{5,60})/i)
+    var wentWrongM = text.match(/What Failed[^\n]*\n([^\n#]{10,120})/i)
+    if (severityM && wentWrongM) return severityM[1].trim() + ' · ' + wentWrongM[1].trim().slice(0, 100)
+    if (severityM) return 'Bug severity: ' + severityM[1].trim()
+    return 'Bug diagnosed — see Root Cause and Fix sections for resolution.'
+  }
+
+  // ── GENERATE_REPORT: status + decision ───────────────────────────────────
+  if (jt === 'GENERATE_REPORT') {
+    var statusM   = text.match(/##\s*Status[^\n]*\n([^\n#]{5,80})/i)
+    var decisionM = text.match(/##\s*Decision[^\n]*\n([^\n#]{5,80})/i)
+    if (statusM && decisionM) return statusM[1].trim().slice(0,60) + ' · Decision: ' + decisionM[1].trim().slice(0,60)
+    if (decisionM) return 'Decision: ' + decisionM[1].trim().slice(0, 120)
+    return 'Report generated — see Status and Decision sections.'
+  }
+
+  // ── EXTRACT_KEYWORDS: count + preview ────────────────────────────────────
+  if (jt === 'EXTRACT_KEYWORDS') {
+    try {
+      var parsed = JSON.parse(text.trim())
+      if (Array.isArray(parsed)) {
+        var count = parsed.length
+        var preview = parsed.slice(0, 4).join(', ')
+        return count + ' keywords extracted: ' + preview + (count > 4 ? ' …' : '')
+      }
+    } catch(e) {}
+    var kwLines = plain.split(/[,\n]+/).map(function(s) { return s.trim() }).filter(function(s) { return s.length > 1 })
+    return kwLines.length + ' terms identified — ' + kwLines.slice(0, 4).join(', ')
+  }
+
+  // ── CLASSIFY: category + confidence ─────────────────────────────────────
+  if (jt === 'CLASSIFY') {
+    var catM = text.match(/(?:Primary Category|Category)[^\n]*\n([^\n#]{3,50})/i) ||
+               text.match(/([A-Z][\w\s&]+(?:Technology|Business|Legal|Science|HR|Career|Other))/i)
+    if (catM) return 'Classified as: ' + catM[1].trim().replace(/^[\s\-–•]+/, '')
+    return plain.slice(0, 80)
+  }
+
+  // ── LINKEDIN_BIO: headline + score ────────────────────────────────────────
+  if (jt === 'LINKEDIN_BIO') {
+    var headlineM = text.match(/##\s*Headline[^\n]*\n([^\n#]{10,220})/i)
+    var scoreLinkedM = text.match(/Profile Strength Score[^\n]*\n(\d+)/i)
+    if (headlineM && scoreLinkedM) return 'Score: ' + scoreLinkedM[1].trim() + '/100 · Headline: ' + headlineM[1].trim().slice(0, 100)
+    if (headlineM) return 'LinkedIn headline: ' + headlineM[1].trim().slice(0, 140)
+    return 'LinkedIn profile generated — copy from the Bio section below.'
+  }
+
+  // ── COMPARE_DOCUMENTS: similarity + recommendation ────────────────────────
+  if (jt === 'COMPARE_DOCUMENTS') {
+    var simM = text.match(/Similarity Score[:\s]+(\d+%)/i)
+    var recM = text.match(/##\s*Recommendation[^\n]*\n([^\n#]{10,100})/i)
+    if (simM && recM) return simM[1].trim() + ' similar · ' + recM[1].trim().replace(/^[\s\-–•]+/, '').slice(0, 100)
+    if (simM) return 'Documents are ' + simM[1].trim() + ' similar — see differences breakdown.'
+    return 'Comparison complete — see Similarity Score and Key Differences.'
+  }
+
+  // ── DEFAULT: highest-signal non-generic sentence ──────────────────────────
   var sentences = plain.match(/[^.!?]{15,}[.!?]+/g) || []
-  for (var si = 1; si < Math.min(sentences.length, 5); si++) {
+  for (var si = 1; si < Math.min(sentences.length, 6); si++) {
     var sent = sentences[si].trim()
     var sentLow = sent.toLowerCase()
-    var isFiller = false
+    var bad = false
     for (var fi = 0; fi < FILLERS.length; fi++) {
-      if (sentLow.startsWith(FILLERS[fi])) { isFiller = true; break }
+      if (sentLow.startsWith(FILLERS[fi])) { bad = true; break }
     }
-    if (!isFiller && sent.length > 20) return sent
+    if (!bad && sent.length > 20 && sent.length < 200) return sent
   }
-
-  // Absolute fallback: tail of plain text (never the start — avoids copying first sentence)
   if (plain.length > 80) {
-    var mid = Math.floor(plain.length * 0.35)
-    return plain.slice(mid, mid + 160).trim() + (plain.length - mid > 160 ? '...' : '')
+    var mid = Math.floor(plain.length * 0.4)
+    return plain.slice(mid, mid + 150).trim()
   }
   return ''
 }
@@ -303,7 +416,7 @@ function ResultRenderer({ text }) {
       i++; continue
     }
     if (/^[=\-]{4,}$/.test(t)) { i++; continue }
-    els.push(<p key={i} className="text-[15px] text-slate-700 leading-7 my-2">{cleanBold(t)}</p>)
+    els.push(<p key={i} className="text-sm text-slate-700 leading-relaxed my-1.5">{cleanBold(t)}</p>)
     i++
   }
   return <div className="flex flex-col">{els}</div>
@@ -315,7 +428,7 @@ function CompactResult({ text }) {
   var plain  = stripPlain(text)
   var result = pickSentences(plain, 2)
   return (
-    <p className="text-[15px] text-slate-800 leading-7 font-normal">
+    <p className="text-[15px] text-slate-800 leading-relaxed font-normal">
       {result || plain.slice(0, 300)}
     </p>
   )
@@ -490,7 +603,6 @@ export default function JobDetails() {
           -webkit-text-fill-color: transparent;
           animation: shimmer 3s linear infinite;
         }
-        .result-card p { margin-bottom: 10px; }
         .result-card::-webkit-scrollbar { width: 4px }
         .result-card::-webkit-scrollbar-track { background: transparent }
         .result-card::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 4px }
@@ -717,11 +829,11 @@ export default function JobDetails() {
                   <ResultRenderer text={job.result} />
                 </div>
               ) : resultType === 'compact' ? (
-                <div className="px-6 py-6">
+                <div className="px-5 py-5">
                   <CompactResult text={job.result} />
                 </div>
               ) : (
-                <div className="px-6 py-5 max-h-[480px] overflow-y-auto result-card">
+                <div className="px-5 py-4 max-h-[480px] overflow-y-auto result-card">
                   <ResultRenderer text={job.result} />
                 </div>
               )}
@@ -741,7 +853,7 @@ export default function JobDetails() {
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-slate-700 leading-7 whitespace-pre-wrap">{summary}</p>
+                    <p className="text-sm text-slate-700 leading-relaxed flex-1 whitespace-pre-wrap flex-1">{summary}</p>
                   </div>
                 </div>
               )}
@@ -750,7 +862,7 @@ export default function JobDetails() {
 
           {/* Processing / waiting state */}
           {!job.result && job.status !== 'FAILED' && (
-            <div className="card p-12 flex flex-col items-center justify-center text-center fade-right stagger-2 min-h-[300px]">
+            <div className="card p-12 flex flex-col items-center justify-center text-center fade-right stagger-2">
               {(job.status === 'PROCESSING' || job.status === 'PENDING') ? (
                 <div className="relative">
                   <div className="spinner w-10 h-10 mb-5" />
