@@ -59,7 +59,7 @@ export default function SystemMetrics() {
 
   // Filter jobs by selected time range
   var cutoff       = new Date(Date.now() - rangeToMs(range))
-  var jobs         = allJobs.filter(function(j) { return new Date(j.createdAt) >= cutoff })
+  var jobs         = allJobs.filter(function(j) { return new Date(j.createdAt + 'Z') >= cutoff })
   var completed    = jobs.filter(function(j) { return j.status === 'COMPLETED' })
   var failed       = jobs.filter(function(j) { return j.status === 'FAILED' })
   var totalInRange = jobs.length
@@ -89,7 +89,7 @@ export default function SystemMetrics() {
   var peakHour = (function() {
     var hours = {}
     jobs.forEach(function(j) {
-      var h = new Date(j.createdAt).getHours()
+      var h = new Date(j.createdAt + 'Z').getHours()
       hours[h] = (hours[h] || 0) + 1
     })
     var vals = Object.values(hours)

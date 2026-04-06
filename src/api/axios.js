@@ -88,30 +88,23 @@ api.interceptors.response.use(
     //   - 401 on user-triggered protected routes → redirect to login ONLY
     //     if the token is actually missing (not just a transient server issue)
     if (status === 401) {
-      var isAuthRoute = url.includes('/auth/login') || url.includes('/auth/register')
-      var isBackgroundPoll = (
-        url.includes('/workers')  ||
-        url.includes('/metrics')  ||
-        (url.includes('/jobs') && err.config && err.config.method === 'get')
-      )
+    var isAuthRoute = url.includes('/auth/login') || url.includes('/auth/register')
 
-      if (!isAuthRoute && !isBackgroundPoll) {
-        // Only redirect if the token is genuinely missing or malformed,
-        // not just because of a transient server-side 401
-        var token = localStorage.getItem('token')
-        if (!token) {
-          // No token at all — redirect to login
-          window.location.href = '/login'
-          return Promise.reject(err)
-        }
-        // Token exists but server returned 401 — show message, keep session
-        // The user can retry. This prevents session destruction on transient errors.
-        if (_showToast) {
-          _showToast('Authentication failed — please try again.', 'error')
-        }
+    if (!isAuthRoute) {
+      var token = localStorage.getItem('token')
+
+      if (!token) {
+        window.location.href = '/login'
         return Promise.reject(err)
       }
+
+      if (_showToast) {
+        _showToast('Temporary auth issue — retry', 'warning')
+      }
+
+      return Promise.reject(err)
     }
+  }
 
     // Skip toast for background polling endpoints
     var isBackgroundPoll = (

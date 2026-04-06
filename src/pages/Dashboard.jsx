@@ -35,7 +35,7 @@ function buildChartData(jobs) {
   var queued = hours.map(function(h, i) {
     var next = hours[i + 1] || new Date()
     return jobs.filter(function(j) {
-      var t = new Date(j.createdAt)
+      var t = new Date(j.createdAt + 'Z')
       return t >= h && t < next && j.status === 'PENDING'
     }).length
   })
